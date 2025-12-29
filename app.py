@@ -2,64 +2,65 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
-import base64
 
 app = Flask(__name__)
-CORS(app)  
+CORS(app)
 
 HF_TOKEN = os.getenv("HF_API_KEY") or "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"
 
-MODEL_URL = "https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf"
+# Modelo mais leve e estável → melhor para plano free
+HF_MODEL = "llava-hf/llava-v1.6-mistral-7b"
 
 @app.route("/")
 def home():
-    return "Backend online ✔ IA pronta para uso!"
+    return "🚀 Backend ativo e pronto!"
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
     try:
         data = request.get_json()
-        img = data.get("image", None)
+        base64_img = data.get("image")
 
-        if not img:
+        if not base64_img:
             return jsonify({"error": "Nenhuma imagem recebida"}), 400
 
         print("📥 Imagem recebida — enviando para HuggingFace...")
 
+        payload = {
+            "inputs": {
+                "image": base64_img,
+                "prompt":
+                    "Analyze the food image and return ONLY JSON like:"
+                    "{\"name\":\"\",\"cal\":0,\"p\":0,\"c\":0,\"dica\":\"\"}"
+            }
+        }
+
         response = requests.post(
-            MODEL_URL,
-            headers={
-                "Authorization": f"Bearer {HF_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "inputs": {
-                    "image": img,
-                    "prompt": (
-                        "Analyze the food image and return ONLY JSON like this: "
-                        "{\"name\":\"\",\"cal\":0,\"p\":0,\"c\":0,\"dica\":\"\"}"
-                    )
-                }
-            },
-            timeout=90
+            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+            headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            json=payload,
+            timeout=120
         )
 
         if response.status_code != 200:
-            return jsonify({"error": "Modelo carregando ou falhou"}), 503
+            print("❌ Modelo respondeu erro:", response.text[:200])
+            return jsonify({"error": "Modelo carregando, tente novamente"}), 503
 
         text = response.text
+        print("📄 Resposta recebida:", text[:200])
 
-        # Limpa resposta para extrair JSON
-        start = text.find("{")
-        end = text.rfind("}")
+        # Extração do JSON dentro da resposta
+        s,e = text.find("{"), text.rfind("}")
+        if s == -1 or e == -1:
+            return jsonify({"error":"Nenhum JSON encontrado"}), 500
 
-        if start == -1 or end == -1:
-            return jsonify({"error": "Sem JSON retornado"}), 500
+        json_clean = text[s:e+1]
 
-        result = text[start:end+1]
-        return jsonify(eval(result))  # <-- converte para JSON válido
+        import json
+        return jsonify(json.loads(json_clean))
 
     except Exception as e:
+        print("🔥 ERRO NO SERVIDOR:", e)
         return jsonify({"error": str(e)}), 500
 
 

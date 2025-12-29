@@ -4,3 +4,6 @@ torch
 Pillow
 python-dotenv
 accelerate
+flask-cors
+requests
+gunicorn

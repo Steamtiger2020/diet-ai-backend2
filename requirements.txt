@@ -7,3 +7,4 @@ accelerate
 flask-cors
 requests
 gunicorn
+huggingface_hub

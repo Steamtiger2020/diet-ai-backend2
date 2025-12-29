@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Pega a chave das variáveis de ambiente
-HF_TOKEN = os.getenv("HF_API_KEY") or "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"
+HF_TOKEN = os.getenv("HF_API_KEY") or "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"
 
 # --- URL ATUALIZADA (CORREÇÃO DO ERRO) ---
 # Mudamos de api-inference para router.huggingface.co/hf-inference

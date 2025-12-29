@@ -9,7 +9,7 @@ CORS(app)
 # ---------------------------------------------------------
 # ⚠️ COLE SEU TOKEN NOVO AQUI DENTRO DAS ASPAS (Substitua tudo)
 # Exemplo: HF_TOKEN = "hf_AbCdEfGhIjKlMnOpQrStUvWxYz"
-HF_TOKEN = "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" 
+HF_TOKEN = "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" 
 # ---------------------------------------------------------
 
 # Modelo LLaVA (Visão)

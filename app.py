@@ -8,44 +8,56 @@ import json
 app = Flask(__name__)
 CORS(app)
 
-# Pega a chave das variáveis de ambiente
-HF_TOKEN = os.getenv("HF_API_KEY") 
+# --- CARREGAMENTO E VERIFICAÇÃO DO TOKEN ---
+HF_TOKEN = os.getenv("HF_API_KEY")
 
-# --- URL ATUALIZADA (CORREÇÃO DO ERRO) ---
-# Mudamos de api-inference para router.huggingface.co/hf-inference
+print("--- INICIANDO SERVIDOR ---")
+if not HF_TOKEN:
+    print("❌ ERRO GRAVE: A variável HF_API_KEY não foi encontrada no sistema!")
+else:
+    # Mostra só o começo e o fim para segurança (não vaza o token inteiro)
+    print(f"✅ Token encontrado: {HF_TOKEN[:3]}...{HF_TOKEN[-3:]}")
+    # Remove espaços em branco acidentais que causam erro
+    HF_TOKEN = HF_TOKEN.strip()
+
 HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/llava-hf/llava-1.5-7b-hf"
 
 def query_huggingface(payload):
+    # Verifica de novo antes de enviar
+    if not HF_TOKEN:
+        return {"error": "Servidor sem Token configurado (HF_API_KEY missing)"}
+
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     
-    # Retry automático caso o modelo esteja carregando
     for i in range(5):
         try:
             response = requests.post(HF_MODEL_URL, headers=headers, json=payload, timeout=30)
             data = response.json()
 
-            # Se for erro de URL antiga (apenas precaução) ou Loading
             if isinstance(data, dict) and "error" in data:
                 error_msg = data["error"]
                 if "loading" in error_msg.lower():
                     wait_time = data.get("estimated_time", 10)
-                    print(f"⏳ Modelo carregando... Esperando {wait_time:.1f}s (Tentativa {i+1}/5)")
+                    print(f"⏳ Carregando... {wait_time}s")
                     time.sleep(wait_time)
-                    continue 
-                return data # Retorna o erro real (como o da URL) para debug
+                    continue
+                # Se der erro de autenticação, mostra no log
+                print(f"❌ Erro da API HF: {error_msg}")
+                return data
             
-            return data # Sucesso
+            return data
             
         except Exception as e:
-            print(f"⚠️ Erro de conexão na tentativa {i+1}: {e}")
+            print(f"⚠️ Erro de conexão: {e}")
             time.sleep(2)
             continue
     
-    return {"error": "Timeout: Falha ao conectar com Hugging Face"}
+    return {"error": "Timeout: Hugging Face não respondeu"}
 
 @app.route("/")
 def home():
-    return "🚀 Backend DietAI Atualizado (Router URL)!"
+    token_status = "✅ Configurado" if HF_TOKEN else "❌ FALTANDO"
+    return f"🚀 Backend DietAI Online! Token: {token_status}"
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -56,9 +68,9 @@ def analyze():
         if not base64_img:
             return jsonify({"error": "Nenhuma imagem recebida"}), 400
 
-        print("📥 Recebendo imagem...")
+        print("📥 Processando imagem...")
 
-        prompt_text = "USER: <image>\nAnalise a comida. Retorne APENAS um JSON puro (sem markdown) no formato: {\"name\": \"Nome do Prato\", \"cal\": 0, \"p\": 0, \"c\": 0, \"dica\": \"Dica curta\"}\nASSISTANT:"
+        prompt_text = "USER: <image>\nAnalise a comida. Retorne APENAS um JSON puro: {\"name\": \"Nome\", \"cal\": 0, \"p\": 0, \"c\": 0, \"dica\": \"Dica\"}\nASSISTANT:"
 
         payload = {
             "inputs": {
@@ -69,12 +81,10 @@ def analyze():
 
         result = query_huggingface(payload)
 
-        # Tratamento de erro que vem da HF
         if isinstance(result, dict) and "error" in result:
-            print("❌ Erro HF:", result["error"])
             return jsonify(result), 503
 
-        # Processamento da resposta LLaVA
+        # Lógica de extração do texto
         raw_text = ""
         if isinstance(result, list) and len(result) > 0:
             raw_text = result[0].get("generated_text", "")
@@ -84,19 +94,15 @@ def analyze():
         if "ASSISTANT:" in raw_text:
             raw_text = raw_text.split("ASSISTANT:")[1]
 
-        print("🤖 Resposta Bruta:", raw_text[:100], "...")
-
-        # Extrair JSON
         s = raw_text.find("{")
         e = raw_text.rfind("}")
         
         if s != -1 and e != -1:
-            json_str = raw_text[s:e+1]
             try:
-                final_json = json.loads(json_str)
+                final_json = json.loads(raw_text[s:e+1])
                 return jsonify(final_json)
             except:
-                return jsonify({"error": "Erro ao ler JSON da IA", "raw": raw_text}), 500
+                return jsonify({"error": "Erro ao ler JSON", "raw": raw_text}), 500
         else:
             return jsonify({"error": "JSON não encontrado", "raw": raw_text}), 500
 

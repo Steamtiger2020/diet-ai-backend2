@@ -6,11 +6,7 @@ import json
 app = Flask(__name__)
 CORS(app)
 
-# ---------------------------------------------------------
-# ⚠️ COLE SEU TOKEN NOVO AQUI DENTRO DAS ASPAS (Substitua tudo)
-# Exemplo: HF_TOKEN = "hf_AbCdEfGhIjKlMnOpQrStUvWxYz"
-HF_TOKEN = "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" 
-# ---------------------------------------------------------
+HF_TOKEN = os.getenv("HF_API_KEY")
 
 # Modelo LLaVA (Visão)
 HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/llava-hf/llava-1.5-7b-hf"

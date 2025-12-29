@@ -1,19 +1,63 @@
+import os  # <--- ESTAVA FALTANDO ESTA LINHA IMPORTANTE!
+import time
+import json
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
-import json
 
 app = Flask(__name__)
 CORS(app)
 
+# --- CONFIGURAÇÃO ---
+# Tenta pegar do Render (Variável de Ambiente). 
 HF_TOKEN = os.getenv("HF_API_KEY")
 
-# Modelo LLaVA (Visão)
+# Verificação de segurança no Log (sem mostrar o token inteiro)
+print("--- INICIANDO SERVIDOR ---")
+if not HF_TOKEN:
+    print("❌ ERRO GRAVE: A variável HF_API_KEY não foi encontrada!")
+    # Fallback de emergência (só se quiser testar local, não recomendado p/ produção)
+    # HF_TOKEN = "hf_..." 
+else:
+    print(f"✅ Token carregado: {HF_TOKEN[:3]}...{HF_TOKEN[-3:]}")
+
+# URL do Modelo LLaVA (Visão) - Estável e Rápido
 HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/llava-hf/llava-1.5-7b-hf"
+
+def query_huggingface(payload):
+    if not HF_TOKEN:
+        return {"error": "Token de API não configurado no servidor"}
+
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    
+    # Tenta 3 vezes (Retry)
+    for i in range(3):
+        try:
+            response = requests.post(HF_MODEL_URL, headers=headers, json=payload, timeout=40)
+            
+            # Se der erro 503 (Loading), espera e tenta de novo
+            if response.status_code == 503:
+                error_data = response.json()
+                wait_time = error_data.get("estimated_time", 20)
+                print(f"⏳ Modelo carregando... Esperando {wait_time}s")
+                time.sleep(wait_time)
+                continue
+            
+            if response.status_code != 200:
+                print(f"❌ Erro API HF ({response.status_code}): {response.text}")
+                return {"error": f"Erro HF: {response.text}"}
+
+            return response.json()
+            
+        except Exception as e:
+            print(f"⚠️ Erro conexão: {e}")
+            time.sleep(2)
+    
+    return {"error": "Timeout: Hugging Face não respondeu"}
 
 @app.route("/")
 def home():
-    return "🚀 Backend de Diagnóstico Online!"
+    return "🚀 Backend DietAI Online e Corrigido!"
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -22,11 +66,12 @@ def analyze():
         base64_img = data.get("image")
 
         if not base64_img:
-            return jsonify({"error": "Sem imagem"}), 400
+            return jsonify({"error": "Nenhuma imagem recebida"}), 400
 
-        print(f"📥 Enviando para HF com token: {HF_TOKEN[:4]}...{HF_TOKEN[-4:]}")
+        print("📥 Recebendo imagem...")
 
-        prompt_text = "USER: <image>\nAnalise a comida. Retorne APENAS um JSON puro: {\"name\": \"Nome do Prato\", \"cal\": 0, \"p\": 0, \"c\": 0, \"dica\": \"Dica\"}\nASSISTANT:"
+        # Prompt otimizado para LLaVA
+        prompt_text = "USER: <image>\nAnalise a comida. Retorne APENAS um JSON puro: {\"name\": \"Nome\", \"cal\": 0, \"p\": 0, \"c\": 0, \"dica\": \"Dica\"}\nASSISTANT:"
 
         payload = {
             "inputs": {
@@ -35,33 +80,24 @@ def analyze():
             }
         }
 
-        # Requisição direta sem Retry (para ver o erro real)
-        response = requests.post(
-            HF_MODEL_URL, 
-            headers={"Authorization": f"Bearer {HF_TOKEN}"}, 
-            json=payload,
-            timeout=60 # Aumentei para 60 segundos
-        )
+        result = query_huggingface(payload)
 
-        # SE DER ERRO NA HUGGING FACE, RETORNA O ERRO EXATO PARA O CELULAR
-        if response.status_code != 200:
-            error_msg = response.text
-            print(f"❌ Erro Real da HF ({response.status_code}): {error_msg}")
-            return jsonify({"error": f"HF Error {response.status_code}: {error_msg}"}), 503
+        # Se retornou erro direto da função query
+        if isinstance(result, dict) and "error" in result:
+            return jsonify(result), 503
 
-        # Se funcionou, processa
-        result = response.json()
+        # Processar resposta do LLaVA (pode vir lista ou dict)
         raw_text = ""
-        
         if isinstance(result, list) and len(result) > 0:
             raw_text = result[0].get("generated_text", "")
         elif isinstance(result, dict):
             raw_text = result.get("generated_text", "")
 
+        # Limpar o prompt da resposta (LLaVA repete o que perguntou)
         if "ASSISTANT:" in raw_text:
             raw_text = raw_text.split("ASSISTANT:")[1]
 
-        # Extração JSON simples
+        # Extrair JSON
         s = raw_text.find("{")
         e = raw_text.rfind("}")
         
@@ -70,17 +106,12 @@ def analyze():
                 final_json = json.loads(raw_text[s:e+1])
                 return jsonify(final_json)
             except:
-                return jsonify({"error": "Erro ao ler JSON", "raw": raw_text})
+                return jsonify({"error": "Erro ao ler JSON da IA", "raw": raw_text}), 500
         else:
-            # Fallback se não vier JSON
-            return jsonify({
-                "name": "Prato Identificado",
-                "cal": 300, "p": 15, "c": 20, 
-                "dica": f"A IA respondeu: {raw_text[:50]}..."
-            })
+            return jsonify({"error": "JSON não encontrado", "raw": raw_text}), 500
 
     except Exception as e:
-        print("🔥 Erro Crítico:", str(e))
+        print("🔥 Erro Crítico no Servidor:", str(e))
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":

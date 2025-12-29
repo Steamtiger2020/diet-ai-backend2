@@ -3,38 +3,58 @@ import requests
 import json
 import os
 
-HF_API_KEY = os.getenv("HF_API_KEY")  # variável será configurada no RENDER!
+# Pega o token do ambiente (Render)
+HF_API_KEY = os.getenv("HF_API_KEY") 
 
-MODEL_URL = "https://router.huggingface.co/hf-inference/meta-llama/Llama-3.2-11B-Vision-Instruct"
+# ✅ CORREÇÃO 1: Usar LLaVA (Mais leve e aceita conta grátis sem travar)
+MODEL_URL = "https://router.huggingface.co/hf-inference/models/llava-hf/llava-1.5-7b-hf"
 
 def analyze_food(base64_image):
-    headers = {"Authorization": f"Bearer {HF_API_KEY}"} 
+    if not HF_API_KEY:
+        return {"error": "Token da API não configurado"}
+
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    
+    # ✅ CORREÇÃO 2: Formato de prompt específico para LLaVA
+    prompt_text = "USER: <image>\nAnalise a refeição e retorne apenas JSON puro: {\"name\":\"Nome\",\"cal\":0,\"p\":0,\"c\":0,\"dica\":\"Dica\"}\nASSISTANT:"
     
     payload = {
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Analise a refeição e retorne apenas JSON {\"name\":\"\",\"cal\":0,\"p\":0,\"c\":0,\"dica\":\"\"}"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                ]
-            }
-        ],
-        "max_tokens": 300
+        "inputs": {
+            "image": base64_image,
+            "prompt": prompt_text
+        }
     }
 
-    res = requests.post(MODEL_URL, headers=headers, json=payload)
-
     try:
-        data = res.json()
-    except:
-        return {"error": "Resposta inválida da IA"}
+        # Timeout de 30s para não travar o servidor
+        res = requests.post(MODEL_URL, headers=headers, json=payload, timeout=30)
+        
+        # Se o modelo estiver carregando (erro comum), retornamos erro específico
+        if res.status_code == 503:
+            return {"error": "Modelo carregando, tente em 20s"}
+            
+        if res.status_code != 200:
+            return {"error": f"Erro HuggingFace: {res.text}"}
 
-    # tenta achar o JSON na resposta
-    if "choices" in data:
-        txt = data["choices"][0]["message"]["content"][0]["text"]
-        s, e = txt.find("{"), txt.rfind("}")
-        if s>=0 and e>=0:
-            return json.loads(txt[s:e+1])
-    
-    return {"error": "IA não retornou JSON válido"}
+        # O LLaVA retorna lista ou dicionário
+        response_json = res.json()
+        
+        raw_text = ""
+        if isinstance(response_json, list) and len(response_json) > 0:
+            raw_text = response_json[0].get("generated_text", "")
+        elif isinstance(response_json, dict):
+            raw_text = response_json.get("generated_text", "")
+
+        # Limpeza da resposta do LLaVA
+        if "ASSISTANT:" in raw_text:
+            raw_text = raw_text.split("ASSISTANT:")[1]
+
+        # Extração do JSON
+        s, e = raw_text.find("{"), raw_text.rfind("}")
+        if s >= 0 and e >= 0:
+            return json.loads(raw_text[s:e+1])
+            
+        return {"error": "IA não retornou JSON válido", "raw": raw_text}
+
+    except Exception as e:
+        return {"error": f"Erro interno: {str(e)}"}
